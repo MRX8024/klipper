@@ -3,8 +3,12 @@
 # Copyright (C) 2018-2020  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+import os
+import time
+import multiprocessing
 import logging, collections
 import stepper
+from . import bulk_sensor
 
 
 ######################################################################
@@ -220,6 +224,137 @@ class TMCErrorCheck:
             self.last_drv_fields = {n: v for n, v in fields.items() if v}
         return {'drv_status': self.last_drv_fields, 'temperature': temp}
 
+######################################################################
+# Record driver status
+######################################################################
+
+class TMCStallguardDump:
+    def __init__(self, config, mcu_tmc):
+        self.printer = config.get_printer()
+        self.batch_interval = 0.00000000001
+        self.stepper_name = ' '.join(config.get_name().split()[1:])
+        self.name = config.get_name().split()[-1]
+        self.mcu_tmc = mcu_tmc
+        fields = self.mcu_tmc.get_fields()
+        # It is possible to support TMC2660, just disable it for now
+        if not fields.all_fields.get("DRV_STATUS", None):
+            return
+        # Collect driver capabilities
+        self.SG2 = fields.all_fields["DRV_STATUS"].get("sg_result", 0)
+        # New drivers have separate register for SG_RESULT
+        self.SG4 = self.mcu_tmc.name_to_reg.get("SG_RESULT", 0)
+        # 2240 supports both SG2 & SG4
+        if not self.SG4:
+            self.SG4  = self.mcu_tmc.name_to_reg.get("SG4_RESULT", 0)
+        self.TPWMTHRS = 0xfffff
+        # Precompute "static" values from config
+        sc = config.getsection(self.stepper_name)
+        rotation_dist, steps_per_rotation = stepper.parse_step_distance(sc)
+        self.step_dist = rotation_dist / steps_per_rotation
+        self.step_dist_256 = 0
+        # No mask for SG4
+        self.sg_result_mask = 0
+        if self.SG2:
+            self.sg_result_mask = fields.all_fields["DRV_STATUS"]["sg_result"]
+        self.cs_actual_mask = fields.all_fields["DRV_STATUS"]["cs_actual"]
+        self.samples = []
+        self.record_data = False
+        self.batch_bulk = bulk_sensor.BatchBulkHelper(
+            self.printer, self._query_tmc, self._update_static,
+            batch_interval = self.batch_interval)
+        api_resp = {'header': ('time', 'velocity', 'sg_result', 'cs_actual')}
+        self.batch_bulk.add_mux_endpoint("tmc/stallguard_dump", "name",
+                                         self.stepper_name, api_resp)
+        self._setup_register_measure()
+    # MEASURE_STALLGUARD setup
+    def _setup_register_measure(self):
+        gcode = self.printer.lookup_object("gcode")
+        gcode.register_mux_command(
+            "MEASURE_STALLGUARD",
+            "STEPPER",
+            self.name,
+            self.cmd_MEASURE_STALLGUARD,
+            desc=self.cmd_MEASURE_STALLGUARD_help,
+        )
+    # To ignore initialization ordering
+    # Query values once upon a time
+    def _update_static(self):
+        fields = self.mcu_tmc.get_fields()
+        mres = fields.get_field("mres")
+        self.step_dist_256 = self.step_dist / (1 << mres)
+        self.TPWMTHRS = fields.get_field("tpwmthrs")
+    def _query_tmc(self, eventtime):
+        try:
+            # Can be zero somehow, must be set to some safe value or ignored
+            tstep = max(1, self.mcu_tmc.get_register("TSTEP"))
+            # TSTEP = 0xfffff means standstill
+            # In standstill SG_RESULT shows the chopper on-time.
+            # A comparison of the chopper on-time
+            # can help to get a rough estimation of motor temperature.
+            if tstep == 0xFFFFF:
+                return {}
+            status = self.mcu_tmc.get_register("DRV_STATUS")
+            if self.SG4 and not self.SG2:
+                # sg mask is 0
+                sg_result = self.mcu_tmc.get_register("SG_RESULT")
+            elif self.SG4 and self.SG2 and tstep >= self.TPWMTHRS:
+                sg_result = self.mcu_tmc.get_register("SG4_RESULT")
+            else:
+                m = self.sg_result_mask
+                sg_result = (status & m) >> ffs(m)
+            m = self.cs_actual_mask
+            cs_actual = (status & m) >> ffs(m)
+            tmc_freq = self.mcu_tmc.get_tmc_frequency()
+            # Trying to support motors with reduction by higher resolution
+            velocity = round(tmc_freq * self.step_dist_256 / tstep, 1)
+            d = [(eventtime, velocity, sg_result, cs_actual)]
+            return {"data": d}
+        except self.printer.command_error as e:
+            self.printer.invoke_shutdown(str(e))
+    def _handle_batch(self, msg):
+        if not self.record_data:
+            return False
+        # 4 hours of samples at 25 ms rate ~ 4.4 Mb
+        if len(self.samples) >= 1/self.batch_interval * 3600 * 4:
+            # Avoid filling up memory with too many samples
+            return False
+        self.samples.append(msg["data"][0])
+        return True
+    def _write_to_file(self, filename):
+        samples = self.samples
+        def write_impl():
+            try:
+                # Try to re-nice writing process
+                os.nice(20)
+            except:
+                pass
+            with open(filename, "w") as fd:
+                fd.write("#time,velocity,sg_result,cs_actual\n")
+                for t, v, sg, cs in samples:
+                    fd.write("%.6f,%.1f,%d,%d\n" % (t, v, sg, cs))
+
+        write_proc = multiprocessing.Process(target=write_impl)
+        write_proc.daemon = True
+        write_proc.start()
+    cmd_MEASURE_STALLGUARD_help = "Record TMC stepper driver stallguard values"
+    def cmd_MEASURE_STALLGUARD(self, gcmd):
+        if not self.record_data:
+            self.record_data = True
+            self.batch_bulk.add_client(self._handle_batch)
+            gcmd.respond_info("stallguard measurements started")
+            logging.info("Start MEASURE_STALLGUARD %s", self.name)
+            return
+        # End measurments
+        name = gcmd.get("NAME", time.strftime("%Y%m%d_%H%M%S"))
+        if not name.replace("-", "").replace("_", "").isalnum():
+            raise gcmd.error("Invalid NAME parameter")
+        self.record_data = False
+        filename = "/home/mrx/%s-%s.csv" % (self.stepper_name, name)
+        self._write_to_file(filename)
+        self.samples = []
+        gcmd.respond_info(
+            "Writing raw stallguard data to %s file" % (filename,))
+
 
 ######################################################################
 # G-Code command helpers
@@ -233,6 +368,7 @@ class TMCCommandHelper:
         self.mcu_tmc = mcu_tmc
         self.current_helper = current_helper
         self.echeck_helper = TMCErrorCheck(config, mcu_tmc)
+        self.record_helper = TMCStallguardDump(config, mcu_tmc)
         self.fields = mcu_tmc.get_fields()
         self.read_registers = self.read_translate = None
         self.toff = None
@@ -262,7 +398,8 @@ class TMCCommandHelper:
                                    desc=self.cmd_SET_TMC_CURRENT_help)
     def _init_registers(self, print_time=None):
         # Send registers
-        for reg_name, val in self.fields.registers.items():
+        for reg_name in list(self.fields.registers.keys()):
+            val = self.fields.registers[reg_name] # Val may change during loop
             self.mcu_tmc.set_register(reg_name, val, print_time)
     cmd_INIT_TMC_help = "Initialize TMC stepper driver registers"
     def cmd_INIT_TMC(self, gcmd):
@@ -277,16 +414,14 @@ class TMCCommandHelper:
             raise gcmd.error("Unknown field name '%s'" % (field_name,))
         value = gcmd.get_int('VALUE', None)
         velocity = gcmd.get_float('VELOCITY', None, minval=0.)
-        tmc_frequency = self.mcu_tmc.get_tmc_frequency()
-        if tmc_frequency is None and velocity is not None:
-            raise gcmd.error("VELOCITY parameter not supported by this driver")
         if (value is None) == (velocity is None):
             raise gcmd.error("Specify either VALUE or VELOCITY")
         if velocity is not None:
-            step_dist = self.stepper.get_step_dist()
-            mres = self.fields.get_field("mres")
-            value = TMCtstepHelper(step_dist, mres, tmc_frequency,
-                                   velocity)
+            if self.mcu_tmc.get_tmc_frequency() is None:
+                raise gcmd.error(
+                    "VELOCITY parameter not supported by this driver")
+            value = TMCtstepHelper(self.mcu_tmc, velocity,
+                                   pstepper=self.stepper)
         reg_val = self.fields.set_field(field_name, value)
         print_time = self.printer.lookup_object('toolhead').get_last_move_time()
         self.mcu_tmc.set_register(reg_name, reg_val, print_time)
@@ -480,7 +615,7 @@ class TMCVirtualPinHelper:
             self.diag_pin_field = None
         self.mcu_endstop = None
         self.en_pwm = False
-        self.pwmthrs = self.coolthrs = 0
+        self.pwmthrs = self.coolthrs = self.thigh = 0
         # Register virtual_endstop pin
         name_parts = config.get_name().split()
         ppins = self.printer.lookup_object("pins")
@@ -504,8 +639,8 @@ class TMCVirtualPinHelper:
     def handle_homing_move_begin(self, hmove):
         if self.mcu_endstop not in hmove.get_mcu_endstops():
             return
+        # Enable/disable stealthchop
         self.pwmthrs = self.fields.get_field("tpwmthrs")
-        self.coolthrs = self.fields.get_field("tcoolthrs")
         reg = self.fields.lookup_register("en_pwm_mode", None)
         if reg is None:
             # On "stallguard4" drivers, "stealthchop" must be enabled
@@ -519,12 +654,21 @@ class TMCVirtualPinHelper:
             self.fields.set_field("en_pwm_mode", 0)
             val = self.fields.set_field(self.diag_pin_field, 1)
         self.mcu_tmc.set_register("GCONF", val)
+        # Enable tcoolthrs (if not already)
+        self.coolthrs = self.fields.get_field("tcoolthrs")
         if self.coolthrs == 0:
             tc_val = self.fields.set_field("tcoolthrs", 0xfffff)
             self.mcu_tmc.set_register("TCOOLTHRS", tc_val)
+        # Disable thigh
+        reg = self.fields.lookup_register("thigh", None)
+        if reg is not None:
+            self.thigh = self.fields.get_field("thigh")
+            th_val = self.fields.set_field("thigh", 0)
+            self.mcu_tmc.set_register(reg, th_val)
     def handle_homing_move_end(self, hmove):
         if self.mcu_endstop not in hmove.get_mcu_endstops():
             return
+        # Restore stealthchop/spreadcycle
         reg = self.fields.lookup_register("en_pwm_mode", None)
         if reg is None:
             tp_val = self.fields.set_field("tpwmthrs", self.pwmthrs)
@@ -534,8 +678,14 @@ class TMCVirtualPinHelper:
             self.fields.set_field("en_pwm_mode", self.en_pwm)
             val = self.fields.set_field(self.diag_pin_field, 0)
         self.mcu_tmc.set_register("GCONF", val)
+        # Restore tcoolthrs
         tc_val = self.fields.set_field("tcoolthrs", self.coolthrs)
         self.mcu_tmc.set_register("TCOOLTHRS", tc_val)
+        # Restore thigh
+        reg = self.fields.lookup_register("thigh", None)
+        if reg is not None:
+            th_val = self.fields.set_field("thigh", self.thigh)
+            self.mcu_tmc.set_register(reg, th_val)
 
 
 ######################################################################
@@ -563,7 +713,7 @@ def TMCWaveTableHelper(config, mcu_tmc):
     set_config_field(config, "start_sin", 0)
     set_config_field(config, "start_sin90", 247)
 
-# Helper to configure and query the microstep settings
+# Helper to configure the microstep settings
 def TMCMicrostepHelper(config, mcu_tmc):
     fields = mcu_tmc.get_fields()
     stepper_name = " ".join(config.get_name().split()[1:])
@@ -571,27 +721,31 @@ def TMCMicrostepHelper(config, mcu_tmc):
         raise config.error(
             "Could not find config section '[%s]' required by tmc driver"
             % (stepper_name,))
-    stepper_config = ms_config = config.getsection(stepper_name)
-    if (stepper_config.get('microsteps', None, note_valid=False) is None
-        and config.get('microsteps', None, note_valid=False) is not None):
-        # Older config format with microsteps in tmc config section
-        ms_config = config
+    sconfig = config.getsection(stepper_name)
     steps = {256: 0, 128: 1, 64: 2, 32: 3, 16: 4, 8: 5, 4: 6, 2: 7, 1: 8}
-    mres = ms_config.getchoice('microsteps', steps)
+    mres = sconfig.getchoice('microsteps', steps)
     fields.set_field("mres", mres)
     fields.set_field("intpol", config.getboolean("interpolate", True))
 
 # Helper for calculating TSTEP based values from velocity
-def TMCtstepHelper(step_dist, mres, tmc_freq, velocity):
-    if velocity > 0.:
-        step_dist_256 = step_dist / (1 << mres)
-        threshold = int(tmc_freq * step_dist_256 / velocity + .5)
-        return max(0, min(0xfffff, threshold))
-    else:
+def TMCtstepHelper(mcu_tmc, velocity, pstepper=None, config=None):
+    if velocity <= 0.:
         return 0xfffff
+    if pstepper is not None:
+        step_dist = pstepper.get_step_dist()
+    else:
+        stepper_name = " ".join(config.get_name().split()[1:])
+        sconfig = config.getsection(stepper_name)
+        rotation_dist, steps_per_rotation = stepper.parse_step_distance(sconfig)
+        step_dist = rotation_dist / steps_per_rotation
+    mres = mcu_tmc.get_fields().get_field("mres")
+    step_dist_256 = step_dist / (1 << mres)
+    tmc_freq = mcu_tmc.get_tmc_frequency()
+    threshold = int(tmc_freq * step_dist_256 / velocity + .5)
+    return max(0, min(0xfffff, threshold))
 
 # Helper to configure stealthChop-spreadCycle transition velocity
-def TMCStealthchopHelper(config, mcu_tmc, tmc_freq):
+def TMCStealthchopHelper(config, mcu_tmc):
     fields = mcu_tmc.get_fields()
     en_pwm_mode = False
     velocity = config.getfloat('stealthchop_threshold', None, minval=0.)
@@ -599,13 +753,7 @@ def TMCStealthchopHelper(config, mcu_tmc, tmc_freq):
 
     if velocity is not None:
         en_pwm_mode = True
-
-        stepper_name = " ".join(config.get_name().split()[1:])
-        sconfig = config.getsection(stepper_name)
-        rotation_dist, steps_per_rotation = stepper.parse_step_distance(sconfig)
-        step_dist = rotation_dist / steps_per_rotation
-        mres = fields.get_field("mres")
-        tpwmthrs = TMCtstepHelper(step_dist, mres, tmc_freq, velocity)
+        tpwmthrs = TMCtstepHelper(mcu_tmc, velocity, config=config)
     fields.set_field("tpwmthrs", tpwmthrs)
 
     reg = fields.lookup_register("en_pwm_mode", None)
@@ -614,3 +762,28 @@ def TMCStealthchopHelper(config, mcu_tmc, tmc_freq):
     else:
         # TMC2208 uses en_spreadCycle
         fields.set_field("en_spreadcycle", not en_pwm_mode)
+
+# Helper to configure StallGuard and CoolStep minimum velocity
+def TMCVcoolthrsHelper(config, mcu_tmc):
+    fields = mcu_tmc.get_fields()
+    try:
+        velocity = config.getfloat('driver_TCOOLTHRS', minval=0.)
+    except:
+        velocity = config.getfloat('coolstep_threshold', None, minval=0.)
+    tcoolthrs = 0
+    if velocity is not None:
+        tcoolthrs = TMCtstepHelper(mcu_tmc, velocity, config=config)
+    fields.set_field("tcoolthrs", tcoolthrs)
+
+# Helper to configure StallGuard and CoolStep maximum velocity and
+# SpreadCycle-FullStepping (High velocity) mode threshold.
+def TMCVhighHelper(config, mcu_tmc):
+    fields = mcu_tmc.get_fields()
+    try:
+        velocity = config.getfloat('driver_THIGH', minval=0.)
+    except:
+        velocity = config.getfloat('high_velocity_threshold', None, minval=0.)
+    thigh = 0
+    if velocity is not None:
+        thigh = TMCtstepHelper(mcu_tmc, velocity, config=config)
+    fields.set_field("thigh", thigh)

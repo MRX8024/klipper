@@ -83,6 +83,18 @@ class AccelQueryHelper:
                 count += 1
         del samples[count:]
         return self.samples
+    def give_samples(self):
+        if self.bg_client is None:
+            # Start measurements
+            self.bg_client = self.chip.start_internal_client()
+            return
+        # End measurements
+        bg_client = self.bg_client
+        self.bg_client = None
+        bg_client.finish_measurements()
+        # Send data
+        samples = self.samples or self.get_samples()
+        return samples
     def write_to_file(self, filename):
         def write_impl():
             try:
@@ -134,7 +146,7 @@ class AccelCommandHelper:
         if self.bg_client is None:
             # Start measurements
             self.bg_client = self.chip.start_internal_client()
-            gcmd.respond_info("accelerometer measurements started")
+            # gcmd.respond_info("accelerometer measurements started")
             return
         # End measurements
         name = gcmd.get("NAME", time.strftime("%Y%m%d_%H%M%S"))
@@ -149,8 +161,8 @@ class AccelCommandHelper:
         else:
             filename = "/tmp/%s-%s-%s.csv" % (self.base_name, self.name, name)
         bg_client.write_to_file(filename)
-        gcmd.respond_info("Writing raw accelerometer data to %s file"
-                          % (filename,))
+        # gcmd.respond_info("Writing raw accelerometer data to %s file"
+        #                   % (filename,))
     cmd_ACCELEROMETER_QUERY_help = "Query accelerometer for the current values"
     def cmd_ACCELEROMETER_QUERY(self, gcmd):
         aclient = self.chip.start_internal_client()

@@ -52,7 +52,7 @@ class VibrationPulseTest:
         self.min_freq = config.getfloat('min_freq', 5., minval=1.)
         # Defaults are such that max_freq * accel_per_hz == 10000 (max_accel)
         self.max_freq = config.getfloat('max_freq', 10000. / 75.,
-                                        minval=self.min_freq, maxval=200.)
+                                        minval=self.min_freq, maxval=1000.)
         self.accel_per_hz = config.getfloat('accel_per_hz', 75., above=0.)
         self.hz_per_sec = config.getfloat('hz_per_sec', 1.,
                                           minval=0.1, maxval=2.)
@@ -64,9 +64,12 @@ class VibrationPulseTest:
     def prepare_test(self, gcmd):
         self.freq_start = gcmd.get_float("FREQ_START", self.min_freq, minval=1.)
         self.freq_end = gcmd.get_float("FREQ_END", self.max_freq,
-                                       minval=self.freq_start, maxval=200.)
+                                       minval=self.freq_start, maxval=1000.)
         self.hz_per_sec = gcmd.get_float("HZ_PER_SEC", self.hz_per_sec,
                                          above=0., maxval=2.)
+        self.accel_per_hz = gcmd.get_float("ACCEL_PER_HZ", self.accel_per_hz,
+                                         above=0., maxval=1000.)
+        
     def run_test(self, axis, gcmd):
         toolhead = self.printer.lookup_object('toolhead')
         X, Y, Z, E = toolhead.get_position()
@@ -210,10 +213,7 @@ class ResonanceTester:
     def _parse_chips(self, accel_chips):
         parsed_chips = []
         for chip_name in accel_chips.split(','):
-            if "adxl345" in chip_name:
-                chip_lookup_name = chip_name.strip()
-            else:
-                chip_lookup_name = "adxl345 " + chip_name.strip();
+            chip_lookup_name = chip_name.strip()
             chip = self.printer.lookup_object(chip_lookup_name)
             parsed_chips.append(chip)
         return parsed_chips
