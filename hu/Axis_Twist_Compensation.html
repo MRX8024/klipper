@@ -711,6 +711,33 @@
     A kompenzációs használat áttekintése
   </a>
   
+    <nav class="md-nav" aria-label="A kompenzációs használat áttekintése">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alapveto-hasznalat-x-tengely-kalibralas" class="md-nav__link">
+    Alapvető használat: X-Tengely kalibrálás
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#y-tengely-kalibralasa" class="md-nav__link">
+    Y-Tengely kalibrálása
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatikus-kalibralas-mindket-tengelyhez" class="md-nav__link">
+    Automatikus kalibrálás mindkét tengelyhez
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1384,6 +1411,33 @@
     A kompenzációs használat áttekintése
   </a>
   
+    <nav class="md-nav" aria-label="A kompenzációs használat áttekintése">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alapveto-hasznalat-x-tengely-kalibralas" class="md-nav__link">
+    Alapvető használat: X-Tengely kalibrálás
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#y-tengely-kalibralasa" class="md-nav__link">
+    Y-Tengely kalibrálása
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatikus-kalibralas-mindket-tengelyhez" class="md-nav__link">
+    Automatikus kalibrálás mindkét tengelyhez
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1420,19 +1474,43 @@ bias</a>. It may result in probe operations such as <a href="Bed_Mesh.html">Bed 
 <blockquote>
 <p><strong>Tip:</strong> Győződj meg róla, hogy az <a href="Config_Reference.html#probe"> X és Y eltolás</a> megfelelően van beállítva, mivel nagymértékben befolyásolják a kalibrálást.</p>
 </blockquote>
+<h3 id="alapveto-hasznalat-x-tengely-kalibralas">Alapvető használat: X-Tengely kalibrálás<a class="headerlink" href="#alapveto-hasznalat-x-tengely-kalibralas" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Az [axis_twist_compensation] modul beállítása után hajtsd végre az alábbi parancsot <code>AXIS_TWIST_COMPENSATION_CALIBRATE</code></li>
+<li>Az <code>[axis_twist_compensation]</code> modul beállítása után futtasd a következőt:</li>
 </ol>
+<div class="highlight"><pre><span></span><code>AXIS_TWIST_COMPENSATION_CALIBRATE
+</code></pre></div>
+
+<p>Ez a parancs alapértelmezés szerint az X-tengelyt kalibrálja. - A kalibrációs varázsló felszólít, hogy mérd meg a szonda Z eltolását az ágy mentén több ponton. - Alapértelmezés szerint a kalibrálás 3 pontot használ, de a <code>SAMPLE_COUNT=&lt;value&gt;</code> opcióval más számot is megadhatsz.</p>
+<ol>
+<li><strong>Z-eltolás beállítása:</strong> A kalibrálás befejezése után mindenképpen [állítsd be a Z-eltolást] (Probe_Calibrate.md#calibrating-probe-z-offset).</li>
+<li>
+<p><strong>Perform Bed Leveling Operations:</strong> Használj szonda alapú műveleteket, például:</p>
 <ul>
-<li>A kalibrációs varázsló felszólít Téged, hogy mérd meg a szonda Z eltolását az ágy mentén néhány ponton</li>
-<li>A kalibrálás alapértelmezett értéke 3 pont, de a <code>SAMPLE_COUNT=</code> opcióval más számot is használhatsz.</li>
+<li><a href="G-Codes.html#screws_tilt_adjust">Csavarok dőlésszög beállítása</a></li>
+<li><a href="G-Codes.html#z_tilt_adjust">Z dőlésszög beállítása</a></li>
 </ul>
-<ol>
-<li><a href="Probe_Calibrate.html#calibrating-probe-z-offset">Z eltolás beállítása</a></li>
-<li>Automatikus/szondás szintezési műveletek végrehajtása, például <a href="G-Codes.html#screws_tilt_adjust">Orsók dőlésbeállítása</a>, <a href="G-Codes.html#z_tilt_adjust">Z dőlésbeállítása</a> stb</li>
-<li>Kezdőpont minden tengelyen, majd szükség esetén végezzünk egy <a href="Bed_Mesh.html"> Ágyháló</a> műveletet</li>
-<li>Végezz el egy próbanyomtatást, majd a kívánt <a href="Axis_Twist_Compensation.html#fine-tuning">finomhangolást</a></li>
+</li>
+<li>
+<p><strong>A beállítás befejezése:</strong></p>
+<ul>
+<li>Küldj kezdő pozícióba minden tengelyt, és hajtsd végre az <a href="Bed_Mesh.html">Ágy háló</a> parancsot, ha szükséges.</li>
+<li>Futtass egy próbanyomtatást, majd szükség esetén <a href="Axis_Twist_Compensation.html#fine-tuning">finomhangolást</a>.</li>
+</ul>
+</li>
 </ol>
+<h3 id="y-tengely-kalibralasa">Y-Tengely kalibrálása<a class="headerlink" href="#y-tengely-kalibralasa" title="Permanent link">&para;</a></h3>
+<p>Az Y-tengely kalibrálási folyamata hasonló az X-tengelyéhez. Az Y-tengely kalibrálásához használd a következőt:</p>
+<div class="highlight"><pre><span></span><code>AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=Y
+</code></pre></div>
+
+<p>Ez végigvezet Téged ugyanazon a mérési folyamaton, mint az X-tengely esetében.</p>
+<h3 id="automatikus-kalibralas-mindket-tengelyhez">Automatikus kalibrálás mindkét tengelyhez<a class="headerlink" href="#automatikus-kalibralas-mindket-tengelyhez" title="Permanent link">&para;</a></h3>
+<p>Az X és Y tengely automatikus kalibrálásához kézi beavatkozás nélkül használd a következőt:</p>
+<div class="highlight"><pre><span></span><code>AXIS_TWIST_COMPENSATION_CALIBRATE AUTO=True
+</code></pre></div>
+
+<p>Ebben az üzemmódban a kalibrációs folyamat mindkét tengelyre automatikusan lefut.</p>
 <blockquote>
 <p><strong>Tipp:</strong> Úgy tűnik, hogy az ágy hőmérséklete és a fúvóka hőmérséklete és mértéke nem befolyásolja a kalibrálási folyamatot.</p>
 </blockquote>

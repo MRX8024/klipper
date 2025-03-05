@@ -912,8 +912,8 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lis2dw-sorozat-konfiguralasa" class="md-nav__link">
-    LIS2DW sorozat konfigurálása
+  <a href="#lis2dw-sorozat-konfiguralasa-spi-n-keresztul" class="md-nav__link">
+    LIS2DW sorozat konfigurálása SPI-n keresztül
   </a>
   
 </li>
@@ -988,6 +988,13 @@
           <li class="md-nav__item">
   <a href="#a-max_accel-kivalasztasa" class="md-nav__link">
     A max_accel kiválasztása
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#megbizhatatlan-rezonanciafrekvenciak-merese" class="md-nav__link">
+    Megbízhatatlan rezonanciafrekvenciák mérése
   </a>
   
 </li>
@@ -1774,8 +1781,8 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lis2dw-sorozat-konfiguralasa" class="md-nav__link">
-    LIS2DW sorozat konfigurálása
+  <a href="#lis2dw-sorozat-konfiguralasa-spi-n-keresztul" class="md-nav__link">
+    LIS2DW sorozat konfigurálása SPI-n keresztül
   </a>
   
 </li>
@@ -1855,6 +1862,13 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#megbizhatatlan-rezonanciafrekvenciak-merese" class="md-nav__link">
+    Megbízhatatlan rezonanciafrekvenciák mérése
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#egyeni-tengelyek-tesztelese" class="md-nav__link">
     Egyéni tengelyek tesztelése
   </a>
@@ -1911,10 +1925,10 @@
 
 
 <h1 id="rezonanciak-merese">Rezonanciák mérése<a class="headerlink" href="#rezonanciak-merese" title="Permanent link">&para;</a></h1>
-<p>A Klipper beépített támogatással rendelkezik az ADXL345, MPU-9250 és LIS2DW kompatibilis gyorsulásmérőkhöz, amelyek segítségével a nyomtató különböző tengelyek rezonanciafrekvenciái mérhetők, és a rezonanciák kompenzálására a <a href="Resonance_Compensation.html">bemeneti alakítók</a> automatikus beállítása használható. Vedd figyelembe, hogy a gyorsulásmérők használata némi forrasztást és krimpelést igényel. Az ADXL345/LIS2DW csatlakoztatható egy Raspberry Pi vagy MCU lap SPI interfészéhez (viszonylag gyorsnak kell lennie). Az MPU-család közvetlenül csatlakoztatható egy Raspberry Pi I2C-interfészéhez, vagy egy MCU-kártya I2C-interfészéhez, amely támogatja a Klipper 400kbit/s <em>gyors üzemmódot</em>.</p>
+<p>A Klipper beépített támogatással rendelkezik az ADXL345, MPU-9250, LIS2DW és LIS3DH kompatibilis gyorsulásmérőkhöz, amelyek segítségével a nyomtató különböző tengelyek rezonanciafrekvenciái mérhetők, és a rezonanciák kompenzálására a <a href="Resonance_Compensation.html">Rezonancia kompenzáció</a> automatikus beállítása használható. Vedd figyelembe, hogy a gyorsulásmérők használata némi forrasztást és krimpelést igényel. Az ADXL345 csatlakoztatható egy Raspberry Pi vagy MCU lap SPI interfészéhez (viszonylag gyorsnak kell lennie). Az MPU-család közvetlenül csatlakoztatható egy Raspberry Pi I2C-interfészéhez, vagy egy MCU-kártya I2C-interfészéhez, amely támogatja a Klipper 400kbit/s <em>gyors üzemmódot</em>. A LIS2DW és a LIS3DH csatlakoztatható SPI vagy I2C interfészhez a fentiekkel megegyező megfontolásokkal.</p>
 <p>A gyorsulásmérők beszerzésekor vedd figyelembe, hogy számos különböző nyomtatott áramköri lapkakialakítás és különböző klónok léteznek. Ha 5V-os nyomtató MCU-hoz csatlakozik, győződj meg róla, hogy rendelkezel feszültségszabályozóval és szintválasztóval.</p>
-<p>Az ADXL345s/LIS2DW-k esetében győződj meg róla, hogy a kártya támogatja az SPI módot (úgy tűnik, hogy néhány kártya keményen I2C-re van konfigurálva az SDO GND-re húzásával).</p>
-<p>Az MPU-9250/MPU-9255/MPU-6515/MPU-6050/MPU-6500-asok esetében is vannak különböző lapkakialakítások és klónok különböző I2C pull-up ellenállásokkal, amelyeket ki kell egészíteni.</p>
+<p>Az ADXL345-ök esetében győződj meg róla, hogy a kártya támogatja az SPI módot (úgy tűnik, hogy néhány kártya keményen I2C-re van konfigurálva az SDO GND-re húzásával).</p>
+<p>Az MPU-9250/MPU-9255/MPU-6515/MPU-6050/MPU-6500-asok és a LIS2DW/LIS3DH-ok esetében is számos különböző lapkakialakítás és klón létezik különböző I2C felhúzó ellenállásokkal, amelyeket ki kell egészíteni.</p>
 <h2 id="mcu-k-klipper-i2c-gyors-uzemmodu-tamogatassal">MCU-k Klipper I2C <em>gyors üzemmódú</em> támogatással<a class="headerlink" href="#mcu-k-klipper-i2c-gyors-uzemmodu-tamogatassal" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1939,6 +1953,11 @@
 <td align="center">AVR AT90</td>
 <td align="left">-</td>
 <td align="left">AT90usb646, AT90usb1286</td>
+</tr>
+<tr>
+<td align="center">SAMD</td>
+<td align="left">SAMC21G18</td>
+<td align="left">SAMC21G18, SAMD21G18, SAMD21E18, SAMD21J18, SAMD21E15, SAMD51G19, SAMD51J19, SAMD51N19, SAMD51P20, SAME51J19, SAME51N19, SAME54P20</td>
 </tr>
 </tbody>
 </table>
@@ -2195,10 +2214,15 @@ sudo apt install python3-numpy python3-matplotlib libatlas-base-dev libopenblas-
 </code></pre></div>
 
 <p>Ezután a NumPy telepítéséhez a Klipper környezetbe futtassuk a parancsot:</p>
-<div class="highlight"><pre><span></span><code>~/klippy-env/bin/pip install -v numpy
+<div class="highlight"><pre><span></span><code>~/klippy-env/bin/pip install -v &quot;numpy&lt;1.26&quot;
 </code></pre></div>
 
-<p>Vedd figyelembe, hogy a CPU teljesítményétől függően ez <em>sok</em> időt vehet igénybe, akár 10-20 percet is. Legyél türelmes, és várd meg a telepítés befejezését. Bizonyos esetekben, ha a kártyán túl kevés RAM van, a telepítés meghiúsulhat, és engedélyezned kell a swapot.</p>
+<p>Vedd figyelembe, hogy a CPU teljesítményétől függően ez <em>sok</em> időt vehet igénybe, akár 10-20 percet is. Legyél türelmes, és várd meg a telepítés befejezését. Bizonyos esetekben, ha a kártyán túl kevés RAM van, a telepítés sikertelen lehet, és engedélyezned kell a swapot. Vedd figyelembe a kényszerített verziót is, mivel a NumPY újabb verzióinak olyan követelményei vannak, amelyek nem feltétlenül teljesülnek egyes klipper python környezetekben.</p>
+<p>A telepítés után ellenőrizd, hogy a parancs nem mutat-e hibát:</p>
+<div class="highlight"><pre><span></span><code>~/klippy-env/bin/python -c &#39;import numpy;&#39;
+</code></pre></div>
+
+<p>A helyes kimenetnek egyszerűen egy új sornak kell lennie.</p>
 <h4 id="adxl345-konfiguralasa-rpi-vel">ADXL345 konfigurálása RPi-vel<a class="headerlink" href="#adxl345-konfiguralasa-rpi-vel" title="Permanent link">&para;</a></h4>
 <p>Először is, ellenőrizd és kövesd az <a href="RPi_microcontroller.html">RPi Microcontroller dokumentum</a> utasításait a "linux mcu" beállításához a Raspberry Pi-n. Ez egy második Klipper példányt fog konfigurálni, amely a Pi-n fut.</p>
 <p>Győződjünk meg róla, hogy a Linux SPI-illesztőprogram engedélyezve van a <code>sudo raspi-config</code> futtatásával és az SPI engedélyezésével az "Interfacing options" menüben.</p>
@@ -2257,7 +2281,7 @@ pin: adxl:gpio23
 </code></pre></div>
 
 <p>Indítsd újra a Klippert a <code>RESTART</code> paranccsal.</p>
-<h4 id="lis2dw-sorozat-konfiguralasa">LIS2DW sorozat konfigurálása<a class="headerlink" href="#lis2dw-sorozat-konfiguralasa" title="Permanent link">&para;</a></h4>
+<h4 id="lis2dw-sorozat-konfiguralasa-spi-n-keresztul">LIS2DW sorozat konfigurálása SPI-n keresztül<a class="headerlink" href="#lis2dw-sorozat-konfiguralasa-spi-n-keresztul" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code>[mcu lis]
 # Változtasd meg a &lt;mySerial&gt; értéket arra, amit fentebb találtál. Például,
 # usb-Klipper_rp2040_E661640843545B2E-if00
@@ -2482,6 +2506,8 @@ max_smoothing: 0.25  # egy példa
 
 <p>hogy helyesen tudd kiszámítani a maximális gyorsulási ajánlásokat. Vedd figyelembe, hogy a <code>SHAPER_CALIBRATE</code> parancs már figyelembe veszi a konfigurált <code>square_corner_velocity</code> paramétert, és nincs szükség annak explicit megadására.</p>
 <p>Ha a formázó újrakalibrálását végzi, és a javasolt formázó konfigurációhoz tartozó simítás majdnem megegyezik az előző kalibrálás során kapott értékkel, ez a lépés kihagyható.</p>
+<h3 id="megbizhatatlan-rezonanciafrekvenciak-merese">Megbízhatatlan rezonanciafrekvenciák mérése<a class="headerlink" href="#megbizhatatlan-rezonanciafrekvenciak-merese" title="Permanent link">&para;</a></h3>
+<p>Néha a rezonancia mérések hamis eredményeket adhatnak, ami a bemeneti alakítókra vonatkozó helytelen javaslatokhoz vezet. Ennek számos oka lehet, például a nyomtatófej ventilátorok, a gyorsulásmérő helytelen helyzete vagy nem merev rögzítése, vagy mechanikai problémák, például laza szíjak vagy tengelyek kötése vagy döcögése. Ne feledd, hogy a rezonancia vizsgálatához minden ventilátort ki kell kapcsolni, különösen a zajosakat, és hogy a gyorsulásmérőt stabilan kell felszerelni a megfelelő mozgó alkatrészre (pl. magára az ágyra a mozgó ágyak esetében, vagy magára a nyomtató extruderére és nem a kocsira, és egyesek jobb eredményeket érnek el, ha a gyorsulásmérőt magára a fúvókára szerelik). Ami a mechanikai problémákat illeti, a felhasználónak ellenőriznie kell, hogy van-e olyan hiba, amely a mozgó tengelyen javítható (pl. a lineáris vezetősínek megtisztítása és kenése, valamint a V-nyílású kerekek feszességének megfelelő beállítása). Ha mindez nem segít, a felhasználó kipróbálhatja az alapértelmezetten ajánlott formázón kívül a többi formázót is a gyártott listából.</p>
 <h3 id="egyeni-tengelyek-tesztelese">Egyéni tengelyek tesztelése<a class="headerlink" href="#egyeni-tengelyek-tesztelese" title="Permanent link">&para;</a></h3>
 <p><code>TEST_RESONANCES</code> parancs támogatja az egyéni tengelyeket. Bár ez nem igazán hasznos a bemeneti alakító kalibrálásához, a nyomtató rezonanciáinak alapos tanulmányozására és például a szíjfeszítés ellenőrzésére használható.</p>
 <p>A CoreXY nyomtatókon a szíjfeszítés ellenőrzéséhez hajtsd végre a következőt</p>
