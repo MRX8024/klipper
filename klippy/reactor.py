@@ -6,6 +6,7 @@
 import os, gc, select, math, time, logging, queue
 import greenlet
 import chelper, util
+import traceback
 
 _NOW = 0.
 _NEVER = 9999999999999999.
@@ -63,6 +64,12 @@ class ReactorGreenlet(greenlet.greenlet):
     def __init__(self, run):
         greenlet.greenlet.__init__(self, run=run)
         self.timer = None
+        self.checkpoint_time = 0.
+        self.curr_reactor_timer = None
+    def set_checkpoint_time(self, time):
+        self.checkpoint_time = time
+    def set_curr_reactor_timer(self, timer):
+        self.curr_reactor_timer = timer
 
 class ReactorMutex:
     def __init__(self, reactor, is_locked):
@@ -150,6 +157,23 @@ class SelectReactor:
         timers = list(self._timers)
         timers.pop(timers.index(timer_handler))
         self._timers = timers
+    def _check_timer_freeze(self, g_dispatch):
+        if not isinstance(g_dispatch, ReactorGreenlet):
+            return
+        timer_freeze_t = self.monotonic() - g_dispatch.checkpoint_time
+        if timer_freeze_t <= 0.025:
+            return
+        try:
+            stack = traceback.extract_stack()[-3]
+            callback = g_dispatch.curr_reactor_timer.callback
+            _func = callback.__name__
+            _cls = callback.__self__.__class__.__name__
+            msg = ("Reactor g_id=%d timer freezed time=%f "
+                "caller=%s.%s stack=%s-->%s" % (id(g_dispatch),
+                timer_freeze_t, _cls, _func, stack.filename, stack.name))
+        except BaseException as e:
+            msg = ("Reactor _check_timer_freeze() error=%s" % e)
+        logging.warning(msg)
     def _check_timers(self, eventtime, busy):
         if eventtime < self._next_timer:
             if busy:
@@ -174,8 +198,11 @@ class SelectReactor:
             if eventtime >= waketime:
                 t.waketime = self.NEVER
                 t.timer_is_running = True
+                g_dispatch.set_curr_reactor_timer(t)
+                g_dispatch.set_checkpoint_time(self.monotonic())
                 t.waketime = waketime = t.callback(eventtime)
                 t.timer_is_running = False
+                self._check_timer_freeze(g_dispatch)
                 if g_dispatch is not self._g_dispatch:
                     self._next_timer = min(self._next_timer, waketime)
                     self._end_greenlet(g_dispatch)
@@ -227,12 +254,14 @@ class SelectReactor:
         return self.monotonic()
     def pause(self, waketime):
         g = greenlet.getcurrent()
+        self._check_timer_freeze(g)
         if g is not self._g_dispatch:
             if self._g_dispatch is None:
                 return self._sys_pause(waketime)
             # Switch to _check_timers (via g.timer.callback return)
             if self._prevent_pause_count:
                 self.verify_can_pause()
+            g.set_checkpoint_time(self.monotonic())
             return self._g_dispatch.switch(waketime)
         # Pausing the dispatch greenlet - prepare a new greenlet to do dispatch
         if self._prevent_pause_count:
@@ -248,6 +277,7 @@ class SelectReactor:
         # Switch to _dispatch_loop (via _end_greenlet or direct)
         eventtime = g_next.switch()
         # This greenlet activated from g.timer.callback (via _check_timers)
+        g.set_checkpoint_time(self.monotonic())
         return eventtime
     def _end_greenlet(self, g_old):
         # Cache this greenlet for later use
@@ -257,6 +287,7 @@ class SelectReactor:
         # Switch to _check_timers (via g_old.timer.callback return)
         self._g_dispatch.switch(self.NEVER)
         # This greenlet reactivated from pause() - return to main dispatch loop
+        g_old.set_checkpoint_time(self.monotonic())
         self._g_dispatch = g_old
     # Support for temporarily disabling pauses
     def assert_no_pause(self):
