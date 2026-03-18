@@ -38,6 +38,8 @@ class ArcSupport:
         self.gcode.register_command("G17", self.cmd_G17)
         self.gcode.register_command("G18", self.cmd_G18)
         self.gcode.register_command("G19", self.cmd_G19)
+        self.gcode.register_command("SET_ARC_RESULUTION", self.cmd_set_resolution,
+                                     desc='Set arc resulution in mm')
 
         # backwards compatibility, prior implementation only supported XY
         self.plane = ARC_PLANE_X_Y
@@ -56,6 +58,10 @@ class ArcSupport:
 
     def cmd_G19(self, gcmd):
         self.plane = ARC_PLANE_Y_Z
+
+    def cmd_set_resolution(self, gcmd):
+        self.mm_per_arc_segment = gcmd.get_float('R', self.mm_per_arc_segment)
+        gcmd.respond_info(f'Resolution now is {self.mm_per_arc_segment} mm')
 
     def _cmd_inner(self, gcmd, clockwise):
         gcodestatus = self.gcode_move.get_status()

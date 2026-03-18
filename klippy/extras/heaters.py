@@ -18,8 +18,7 @@ PID_PARAM_BASE = 255.
 class Heater:
     def __init__(self, config, sensor):
         self.printer = config.get_printer()
-        self.name = config.get_name()
-        self.short_name = short_name = self.name.split()[-1]
+        self.name = config.get_name().split()[-1]
         # Setup sensor
         self.sensor = sensor
         self.min_temp = config.getfloat('min_temp', minval=KELVIN_TO_CELSIUS)
@@ -37,7 +36,6 @@ class Heater:
         self.max_power = config.getfloat('max_power', 1., above=0., maxval=1.)
         self.smooth_time = config.getfloat('smooth_time', 1., above=0.)
         self.inv_smooth_time = 1. / self.smooth_time
-        self.is_shutdown = False
         self.lock = threading.Lock()
         self.last_temp = self.smoothed_temp = self.target_temp = 0.
         self.last_temp_time = 0.
@@ -45,7 +43,11 @@ class Heater:
         self.next_pwm_time = 0.
         self.last_pwm_value = 0.
         # Setup control algorithm sub-class
-        algos = {'watermark': ControlBangBang, 'pid': ControlPID}
+        algos = {
+            'watermark': ControlBangBang,
+            'pid': ControlPID,
+            'pid_v': ControlVelocityPID,
+        }
         algo = config.getchoice('control', algos)
         self.control = algo(self, config)
         # Setup output heater pin
@@ -57,16 +59,14 @@ class Heater:
         self.mcu_pwm.setup_cycle_time(pwm_cycle_time)
         self.mcu_pwm.setup_max_duration(MAX_HEAT_TIME)
         # Load additional modules
-        self.printer.load_object(config, "verify_heater %s" % (short_name,))
+        self.printer.load_object(config, "verify_heater %s" % (self.name,))
         self.printer.load_object(config, "pid_calibrate")
         gcode = self.printer.lookup_object("gcode")
         gcode.register_mux_command("SET_HEATER_TEMPERATURE", "HEATER",
-                                   short_name, self.cmd_SET_HEATER_TEMPERATURE,
+                                   self.name, self.cmd_SET_HEATER_TEMPERATURE,
                                    desc=self.cmd_SET_HEATER_TEMPERATURE_help)
-        self.printer.register_event_handler("klippy:shutdown",
-                                            self._handle_shutdown)
     def set_pwm(self, read_time, value):
-        if self.target_temp <= 0. or self.is_shutdown:
+        if self.target_temp <= 0.:
             value = 0.
         if ((read_time < self.next_pwm_time or not self.last_pwm_value)
             and abs(value - self.last_pwm_value) < 0.05):
@@ -90,11 +90,7 @@ class Heater:
             self.smoothed_temp += temp_diff * adj_time
             self.can_extrude = (self.smoothed_temp >= self.min_extrude_temp)
         #logging.debug("temp: %.3f %f = %f", read_time, temp)
-    def _handle_shutdown(self):
-        self.is_shutdown = True
     # External commands
-    def get_name(self):
-        return self.name
     def get_pwm_delay(self):
         return self.pwm_delay
     def get_max_power(self):
@@ -135,7 +131,7 @@ class Heater:
             last_pwm_value = self.last_pwm_value
         is_active = target_temp or last_temp > 50.
         return is_active, '%s: target=%.0f temp=%.1f pwm=%.3f' % (
-            self.short_name, target_temp, last_temp, last_pwm_value)
+            self.name, target_temp, last_temp, last_pwm_value)
     def get_status(self, eventtime):
         with self.lock:
             target_temp = self.target_temp
@@ -171,6 +167,8 @@ class ControlBangBang:
             self.heater.set_pwm(read_time, 0.)
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return smoothed_temp < target_temp-self.max_delta
+    def get_type(self):
+        return 'watermark'
 
 
 ######################################################################
@@ -183,47 +181,120 @@ PID_SETTLE_SLOPE = .1
 class ControlPID:
     def __init__(self, heater, config):
         self.heater = heater
+        self.printer = config.get_printer()
+        self.fan_name = config.get("fan", None)
+        self.fan = None
+        if self.fan_name:
+            self.printer.load_object(config, self.fan_name)
+            self.fan = self.printer.lookup_object(self.fan_name)
+        self.fan_pwm_loss = config.getfloat('fan_power_loss', .0,
+                                            minval=.0, maxval=.5)
         self.heater_max_power = heater.get_max_power()
         self.Kp = config.getfloat('pid_Kp') / PID_PARAM_BASE
         self.Ki = config.getfloat('pid_Ki') / PID_PARAM_BASE
         self.Kd = config.getfloat('pid_Kd') / PID_PARAM_BASE
-        self.min_deriv_time = heater.get_smooth_time()
-        self.temp_integ_max = 0.
-        if self.Ki:
-            self.temp_integ_max = self.heater_max_power / self.Ki
+        self.dt = heater.pwm_delay
+        self.smooth = 1. + heater.get_smooth_time() / self.dt
         self.prev_temp = AMBIENT_TEMP
-        self.prev_temp_time = 0.
-        self.prev_temp_deriv = 0.
-        self.prev_temp_integ = 0.
+        self.prev_err = 0.
+        self.prev_der = 0.
+        self.int_sum = 0.
+
     def temperature_update(self, read_time, temp, target_temp):
-        time_diff = read_time - self.prev_temp_time
-        # Calculate change of temperature
-        temp_diff = temp - self.prev_temp
-        if time_diff >= self.min_deriv_time:
-            temp_deriv = temp_diff / time_diff
-        else:
-            temp_deriv = (self.prev_temp_deriv * (self.min_deriv_time-time_diff)
-                          + temp_diff) / self.min_deriv_time
-        # Calculate accumulated temperature "error"
-        temp_err = target_temp - temp
-        temp_integ = self.prev_temp_integ + temp_err * time_diff
-        temp_integ = max(0., min(self.temp_integ_max, temp_integ))
-        # Calculate output
-        co = self.Kp*temp_err + self.Ki*temp_integ - self.Kd*temp_deriv
-        #logging.debug("pid: %f@%.3f -> diff=%f deriv=%f err=%f integ=%f co=%d",
-        #    temp, read_time, temp_diff, temp_deriv, temp_err, temp_integ, co)
-        bounded_co = max(0., min(self.heater_max_power, co))
-        self.heater.set_pwm(read_time, bounded_co)
-        # Store state for next measurement
+        # calculate the error
+        err = target_temp - temp
+        # calculate the current integral amount using the Trapezoidal rule
+        ic =  ((self.prev_err + err) / 2.) * self.dt
+        i = self.int_sum + ic
+        # calculate the current derivative using a modified moving average,
+        # and derivative on measurement, to account for derivative kick
+        # when the set point changes
+        dc = -(temp - self.prev_temp) / self.dt
+        dc = ((self.smooth - 1.) * self.prev_der + dc)/self.smooth
+        # calculate the output
+        o = self.Kp * err + self.Ki * i + self.Kd * dc
+        if self.fan and self.fan.fan.get_fan_power() > 0:
+            o = o + self.fan.fan.get_fan_power() * self.fan_pwm_loss
+        # calculate the saturated output
+        so = max(0., min(self.heater_max_power, o))
+
+        # update the heater
+        self.heater.set_pwm(read_time, so)
+        #update the previous values
         self.prev_temp = temp
-        self.prev_temp_time = read_time
-        self.prev_temp_deriv = temp_deriv
-        if co == bounded_co:
-            self.prev_temp_integ = temp_integ
+        self.prev_der = dc
+        if target_temp > 0.:
+            self.prev_err = err
+            if o == so:
+                # not saturated so an update is allowed
+                self.int_sum = i
+            else:
+                # saturated, so conditionally integrate
+                if (o>0.)-(o<0.) != (ic>0.)-(ic<0.):
+                    # the signs are opposite so an update is allowed
+                    self.int_sum = i
+        else:
+            self.prev_err = 0.
+            self.int_sum = 0.
+
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         temp_diff = target_temp - smoothed_temp
         return (abs(temp_diff) > PID_SETTLE_DELTA
-                or abs(self.prev_temp_deriv) > PID_SETTLE_SLOPE)
+                or abs(self.prev_der) > PID_SETTLE_SLOPE)
+    def get_type(self):
+        return 'pid'
+
+
+######################################################################
+# Velocity (PID) control algo
+######################################################################
+
+class ControlVelocityPID:
+    def __init__(self, heater, config):
+        self.heater = heater
+        self.heater_max_power = heater.get_max_power()
+        self.dt = heater.pwm_delay
+        self.Kp = config.getfloat('pid_Kp') / PID_PARAM_BASE
+        self.Ki = config.getfloat('pid_Ki') / PID_PARAM_BASE
+        self.Kd = config.getfloat('pid_Kd') / PID_PARAM_BASE
+        self.smooth = 1. + heater.get_smooth_time() / self.dt
+        self.t = [0.] * 3 # temperature readings
+        self.d1 = 0. # previous 1st derivative
+        self.d2 = 0. # previous 2nd derivative
+        self.pwm = 0.
+
+    def temperature_update(self, read_time, temp, target_temp):
+        self.t.pop(0)
+        self.t.append(temp)
+
+        # calculate the derivatives using a modified moving average,
+        # also account for derivative and proportional kick
+        d1 = self.t[-1] - self.t[-2]
+        self.d1 = ((self.smooth - 1.) * self.d1 + d1)/self.smooth
+        d2 = (self.t[-1] - 2.*self.t[-2] + self.t[-3])/self.dt
+        self.d2 = ((self.smooth - 1.) * self.d2 + d2)/self.smooth
+
+        # calcualte the output
+        p = self.Kp * -self.d1
+        i = self.Ki * self.dt * (target_temp - self.t[-1])
+        d = self.Kd * -self.d2
+        self.pwm = max(0., min(self.heater_max_power, self.pwm + p + i + d))
+
+        # ensure no weird artifacts
+        if target_temp == 0.:
+            self.d1 = 0.
+            self.d2 = 0.
+            self.pwm = 0.
+
+        # update the heater
+        self.heater.set_pwm(read_time, self.pwm)
+
+    def check_busy(self, eventtime, smoothed_temp, target_temp):
+        temp_diff = target_temp - smoothed_temp
+        return (abs(temp_diff) > PID_SETTLE_DELTA
+                or abs(self.d1) > PID_SETTLE_SLOPE)
+    def get_type(self):
+        return 'pid_v'
 
 
 ######################################################################
@@ -238,7 +309,6 @@ class PrinterHeaters:
         self.gcode_id_to_sensor = {}
         self.available_heaters = []
         self.available_sensors = []
-        self.available_monitors = []
         self.has_started = self.have_load_sensors = False
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         self.printer.register_event_handler("gcode:request_restart",
@@ -289,6 +359,8 @@ class PrinterHeaters:
         if sensor_type not in self.sensor_factories:
             raise self.printer.config_error(
                 "Unknown temperature sensor '%s'" % (sensor_type,))
+        if sensor_type == 'NTC 100K beta 3950':
+            config.deprecate('sensor_type', 'NTC 100K beta 3950')
         return self.sensor_factories[sensor_type](config)
     def register_sensor(self, config, psensor, gcode_id=None):
         self.available_sensors.append(config.get_name())
@@ -300,12 +372,9 @@ class PrinterHeaters:
             raise self.printer.config_error(
                 "G-Code sensor id %s already registered" % (gcode_id,))
         self.gcode_id_to_sensor[gcode_id] = psensor
-    def register_monitor(self, config):
-        self.available_monitors.append(config.get_name())
     def get_status(self, eventtime):
         return {'available_heaters': self.available_heaters,
-                'available_sensors': self.available_sensors,
-                'available_monitors': self.available_monitors}
+                'available_sensors': self.available_sensors}
     def turn_off_all_heaters(self, print_time=0.):
         for heater in self.heaters.values():
             heater.set_temp(0.)

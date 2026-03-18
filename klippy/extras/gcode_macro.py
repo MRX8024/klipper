@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import traceback, logging, ast, copy, json
 import jinja2
+from math import sin, cos, asin, acos, pi, sqrt
 
 
 ######################################################################
@@ -72,6 +73,16 @@ class PrinterGCodeMacro:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.env = jinja2.Environment('{%', '%}', '{', '}')
+        self.env.globals.update(sin=sin)
+        self.env.globals.update(cos=cos)
+        self.env.globals.update(pi=pi)
+        self.env.globals.update(round=round)
+        self.env.globals.update(asin=asin)
+        self.env.globals.update(acos=acos)
+        self.env.globals.update(min=min)
+        self.env.globals.update(max=max)
+        self.env.globals.update(sqrt=sqrt)
+
     def load_template(self, config, option, default=None):
         name = "%s:%s" % (config.get_name(), option)
         if default is None:

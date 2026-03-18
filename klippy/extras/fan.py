@@ -71,7 +71,8 @@ class Fan:
                                               self.set_speed(pt, value)))
     def _handle_request_restart(self, print_time):
         self.set_speed(print_time, 0.)
-
+    def get_fan_power(self):
+        return self.last_fan_value
     def get_status(self, eventtime):
         tachometer_status = self.tachometer.get_status(eventtime)
         return {
@@ -105,11 +106,11 @@ class PrinterFan:
         self.fan = Fan(config)
         # Register commands
         gcode = config.get_printer().lookup_object('gcode')
-        gcode.register_command("M106", self.cmd_M106)
+        gcode.register_command("M106", self.cmd_)
         gcode.register_command("M107", self.cmd_M107)
     def get_status(self, eventtime):
         return self.fan.get_status(eventtime)
-    def cmd_M106(self, gcmd):
+    def cmd_(self, gcmd):
         # Set fan speed
         value = gcmd.get_float('S', 255., minval=0.) / 255.
         self.fan.set_speed_from_command(value)
