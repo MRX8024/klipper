@@ -485,13 +485,16 @@ class QueryStatusHelper:
                    if hasattr(o, 'get_status')]
         web_request.send({'objects': objects})
     def _do_query(self, eventtime):
+        reactor = self.printer.get_reactor()
+        start_time = reactor.monotonic()
+        call_trace = []
+        TRACE_MIN_DURATION = 0.001
         last_query = self.last_query
         query = self.last_query = {}
         msglist = self.pending_queries
         self.pending_queries = []
         msglist.extend(self.clients.values())
         # Generate get_status() info for each client
-        reactor = self.printer.get_reactor()
         with reactor.assert_no_pause():
             for cconn, subscription, send_func, template in msglist:
                 is_query = cconn is None
@@ -507,7 +510,12 @@ class QueryStatusHelper:
                         if po is None or not hasattr(po, 'get_status'):
                             res = query[obj_name] = {}
                         else:
+                            cb_start = reactor.monotonic()
                             res = query[obj_name] = po.get_status(eventtime)
+                            cb_dur = reactor.monotonic() - cb_start
+                            if cb_dur > TRACE_MIN_DURATION:
+                                call_trace.append(
+                                    ("get_status:%s" % (obj_name,), cb_dur))
                     if req_items is None:
                         req_items = list(res.keys())
                         if req_items:
@@ -522,9 +530,24 @@ class QueryStatusHelper:
                         cquery[obj_name] = cres
                 # Send data
                 if cquery or is_query:
+                    send_start = reactor.monotonic()
                     tmp = dict(template)
                     tmp['params'] = {'eventtime': eventtime, 'status': cquery}
                     send_func(tmp)
+                    send_dur = reactor.monotonic() - send_start
+                    if send_dur > TRACE_MIN_DURATION:
+                        dest = "query" if is_query else cconn
+                        call_trace.append(("send:%s" % (dest,), send_dur))
+        total_duration = reactor.monotonic() - start_time
+        if total_duration > 0.25:
+            if call_trace:
+                trace_str = "\n".join(
+                    "  %-40s %.3f s" % (name, dur) for name, dur in call_trace)
+            else:
+                trace_str = "No callbacks longer %.3fs" % TRACE_MIN_DURATION
+            logging.warning(
+                "QueryStatusHelper._do_query took %.3fs, eventtime=%.3f\n%s",
+                total_duration, eventtime, trace_str)
         if not query:
             # Unregister timer if there are no longer any subscriptions
             reactor.unregister_timer(self.query_timer)
