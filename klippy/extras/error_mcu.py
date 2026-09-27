@@ -99,11 +99,13 @@ class PrinterMCUError:
         msg_updated = []
         for mcu_name, mcu in self.printer.lookup_objects('mcu'):
             try:
-                mcu_version = mcu.get_status()['mcu_version']
+                status = mcu.get_status()
+                mcu_version = status['mcu_version']
             except:
                 logging.exception("Unable to retrieve mcu_version from mcu")
                 continue
-            if mcu_version != host_version:
+            if (mcu_version != host_version
+                or status.get('loader_abi_mismatch')):
                 msg_update.append("%s: Current version %s"
                                   % (mcu_name.split()[-1], mcu_version))
             else:

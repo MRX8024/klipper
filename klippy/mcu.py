@@ -1252,7 +1252,9 @@ class MCU:
         return offset, freq
     # Statistics wrappers
     def get_status(self, eventtime=None):
-        return self._stats_helper.get_status(eventtime)
+        status = self._stats_helper.get_status(eventtime)
+        status.update(self._module_helper.get_status())
+        return status
     def stats(self, eventtime):
         return self._stats_helper.stats(eventtime)
 

@@ -277,6 +277,8 @@ class HandleModuleLayout:
 ######################################################################
 
 SHF_ALLOC = 0x2
+SHT_SYMTAB = 2
+SHN_ABS = 0xfff1
 
 def read_str(data, offset):
     return data[offset:data.index(b'\0', offset)].decode()
@@ -300,7 +302,22 @@ def read_elf(filename):
         sh['name'] = read_str(data, stroff + sh['name'])
     return data, sections
 
-def check_elf(elf_filename, info):
+# Return the names of the absolute symbols of an ELF file
+def read_abs_symbols(data, sections):
+    out = []
+    for sh in sections:
+        if sh['type'] != SHT_SYMTAB:
+            continue
+        stroff = sections[sh['link']]['offset']
+        for pos in range(sh['offset'], sh['offset'] + sh['size'],
+                         sh['entsize']):
+            name, value, size, info, other, shndx = struct.unpack_from(
+                '<IIIBBH', data, pos)
+            if shndx == SHN_ABS:
+                out.append(read_str(data, stroff + name))
+    return out
+
+def check_elf(elf_filename, info, imports_filename):
     data, sections = read_elf(elf_filename)
     total_end = info['base']
     for sh in sections:
@@ -312,6 +329,12 @@ def check_elf(elf_filename, info):
         total_end = max(total_end, sh['addr'] + sh['size'])
     sys.stdout.write("Module size: %d bytes of ram\n"
                      % (total_end - info['base'],))
+    # The linker only defines the exports (PROVIDE) that are used
+    if imports_filename:
+        exports = info.get('exports', {})
+        imports = sorted(set([name for name in read_abs_symbols(data, sections)
+                              if name in exports]))
+        write_file(imports_filename, json.dumps(imports))
 
 
 ######################################################################
@@ -342,12 +365,15 @@ def main():
                     help="file to write module linker script")
     opts.add_option("-c", dest="check_elf",
                     help="verify a linked module elf file")
+    opts.add_option("-s", dest="write_imports",
+                    help="file to write the firmware functions used by the"
+                    " module (with -c)")
     options, args = opts.parse_args()
     if options.info is None:
         opts.error("Loader info file (-i) required")
     info = read_json(options.info)
     if options.check_elf:
-        check_elf(options.check_elf, info)
+        check_elf(options.check_elf, info, options.write_imports)
         return
     if len(args) != 2 or options.dictionary is None:
         opts.error("Incorrect arguments")
