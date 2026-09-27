@@ -76,3 +76,8 @@ lib/rp2040_flash/rp2040_flash:
 flash: $(rptarget-y) lib/rp2040_flash/rp2040_flash
 	@echo "  Flashing $< to $(FLASH_DEVICE)"
 	$(Q)$(PYTHON) ./scripts/flash_usb.py -t $(CONFIG_MCU) -d "$(FLASH_DEVICE)" $(if $(NOSUDO),--no-sudo) $(rptarget-y)
+
+# Loaded modules run from ram and call firmware code using "long calls".
+# The needed libgcc and libc code is linked into the module.
+MODULE_CFLAGS += -mlong-calls
+MODULE_LIBS += -lgcc -lc_nano
