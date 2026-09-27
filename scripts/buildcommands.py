@@ -243,6 +243,40 @@ Handlers.append(Handle_arm_irq())
 
 
 ######################################################################
+# Run-time loaded module export table
+######################################################################
+
+# Create a table of firmware functions available to loaded modules
+class HandleLoaderExports:
+    def __init__(self):
+        self.exports = []
+        self.ctr_dispatch = { 'DECL_LOADER_EXPORT': self.decl_loader_export }
+    def decl_loader_export(self, req):
+        name = req.split()[1]
+        if name not in self.exports:
+            self.exports.append(name)
+    def update_data_dictionary(self, data):
+        if self.exports:
+            data['loader_exports'] = self.exports
+    def generate_code(self, options):
+        if not self.exports:
+            return ""
+        externs = ["extern const void *const _loader_export_%s;\n" % (n,)
+                   for n in self.exports]
+        table = ["    &_loader_export_%s,\n" % (n,) for n in self.exports]
+        fmt = """
+%s
+const void *const *const loader_export_table[] PROGMEM = {
+%s};
+
+const uint16_t loader_export_count PROGMEM = ARRAY_SIZE(loader_export_table);
+"""
+        return fmt % (''.join(externs), ''.join(table))
+
+Handlers.append(HandleLoaderExports())
+
+
+######################################################################
 # Wire protocol commands and responses
 ######################################################################
 

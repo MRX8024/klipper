@@ -324,6 +324,17 @@ config WANT_STEPPER_OPTIMIZED_BOTH_EDGE
         take a step only on the "rising" or "falling" level of the
         step pin).
 
+# Support loading code into the micro-controller at run-time
+config HAVE_LOADER
+    bool
+    default y if MACH_RPXXXX
+config WANT_LOADER
+    bool "Support loading code modules at run-time"
+    depends on HAVE_LOADER
+    help
+        Allow the host to load code (for example sensor_adxl345.c)
+        into the micro-controller ram when Klipper starts.
+
 # Support setting gpio state at startup
 config INITIAL_PINS
     string "GPIO pins to set at micro-controller startup"
