@@ -74,6 +74,23 @@ pins such as "extra_mcu:ar9" may then be used elsewhere in the config
 # See the "mcu" section for configuration parameters.
 ```
 
+### [mcu_module]
+
+Micro-controller code that is compiled on the host and loaded into
+the micro-controller when Klipper starts.
+
+```
+[mcu_module my_module]
+sources:
+#   A list of C source files separated by commas or new lines that
+#   implement the module. Relative paths are relative to the Klipper
+#   source directory (for example, "src/sensor_adxl345.c"). This
+#   parameter must be provided.
+#mcu: mcu
+#   The name of the micro-controller to load the module into. The
+#   default is "mcu".
+```
+
 ## Common kinematic settings
 
 ### [printer]
