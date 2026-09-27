@@ -4,6 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import os, sys, re, json, zlib, struct, logging, subprocess, multiprocessing
+import msgproto
 
 KLIPPER_DIR = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -14,6 +15,8 @@ LOADER_MAGIC = 0x444f4d4b
 LOADER_ABI_VERSION = 1
 LS_ACTIVE = 2
 WRITE_CHUNK_SIZE = 48
+# Pseudo symbol of scripts/loaderabi.py for the types used by module glue
+LOADER_CORE_SYMBOL = '_loader_core'
 
 def read_file(filename, mode='rb'):
     f = open(filename, mode)
@@ -45,6 +48,7 @@ class MCUModuleHelper:
         self._reactor = printer.get_reactor()
         self._name = mcu.get_name()
         self._modules = {}
+        self._abi_mismatch = []
         # Separate directory for each mcu of each Klipper instance
         config_file = printer.get_start_args().get('config_file', '')
         instance_id = zlib.crc32(os.path.abspath(config_file).encode())
@@ -155,10 +159,39 @@ class MCUModuleHelper:
                          self._name, os.path.getsize(image_filename))
         else:
             logging.info("MCU '%s' loadable module up to date", self._name)
+        host_abi = json.loads(read_file(os.path.join(
+            outdir, 'loader_abi.json'), 'r'))
+        imports = json.loads(read_file(os.path.join(
+            moddir, 'module_imports.json'), 'r'))
+        self._check_abi(fwdict, host_abi, imports)
         image = read_file(image_filename)
         moddict = json.loads(read_file(os.path.join(moddir, 'module.json'),
                                        'r'))
         return image, moddict
+    # Verify the firmware provides the interface the module was built for
+    def _check_abi(self, fwdict, host_abi, imports):
+        fw_abi = fwdict.get('loader_abi', {})
+        fw_symbols = dict(zip(fwdict.get('loader_exports', []),
+                              fw_abi.get('hashes', [])))
+        fw_symbols[LOADER_CORE_SYMBOL] = fw_abi.get('core')
+        host_symbols = host_abi.get('symbols', {})
+        if fw_abi.get('version') != host_abi.get('version'):
+            mismatch = ['(interface description missing or outdated)']
+        else:
+            symbols = [LOADER_CORE_SYMBOL] + imports
+            mismatch = [s for s in symbols
+                        if fw_symbols.get(s) != host_symbols.get(s)]
+        if not mismatch:
+            return
+        self._abi_mismatch = mismatch
+        raise msgproto.error(
+            "MCU '%s' firmware interface does not match the host software"
+            " used to build its loadable modules (changed: %s)"
+            % (self._name, ", ".join(mismatch)))
+    def get_status(self):
+        if self._abi_mismatch:
+            return {'loader_abi_mismatch': list(self._abi_mismatch)}
+        return {}
     # Communication with the mcu loader (src/loader.c)
     def _query_state(self):
         query_cmd = self._mcu.lookup_query_command(

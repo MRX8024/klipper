@@ -129,13 +129,13 @@ $(MODULE_OUT)module_ctr.o: $(MODULE_OUT)module_ctr.c
 $(MODULE_OUT)module.elf: $(MODULE_OBJS) $(MODULE_OUT)module_ctr.o
 	@echo "  Linking $@"
 	$(Q)$(CC) $(MODULE_OBJS) $(MODULE_OUT)module_ctr.o $(CFLAGS_module.elf) $(MODULE_LIBS) -o $@
-	$(Q)$(PYTHON) ./scripts/buildmodule.py -i $(MODULE_OUT)loader.json -c $@
+	$(Q)$(PYTHON) ./scripts/buildmodule.py -i $(MODULE_OUT)loader.json -c $@ -s $(MODULE_OUT)module_imports.json
 
 $(MODULE_OUT)module.bin: $(MODULE_OUT)module.elf
 	@echo "  Creating module image $@"
 	$(Q)$(OBJCOPY) -O binary -j .text $< $@
 
-module: $(MODULE_OUT)module.bin
+module: $(MODULE_OUT)module.bin $(OUT)loader_abi.json
 
 -include $(patsubst %.o,%.d,$(MODULE_OBJS))
 
