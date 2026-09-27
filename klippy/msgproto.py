@@ -411,22 +411,24 @@ class MessageParser:
                 msg = MessageFormat(msgid_bytes, msgformat, self.enumerations)
                 self.messages_by_id[msgid] = msg
                 self.messages_by_name[msg.name] = msg
+    def _add_messages(self, data):
+        self.fill_enumerations(data.get('enumerations', {}))
+        commands = data.get('commands', {})
+        responses = data.get('responses', {})
+        output = data.get('output', {})
+        all_messages = dict(commands)
+        all_messages.update(responses)
+        all_messages.update(output)
+        self._init_messages(all_messages, commands.values(),
+                            output.values())
+        self.config.update(data.get('config', {}))
     def process_identify(self, data, decompress=True):
         try:
             if decompress:
                 data = zlib.decompress(data)
             self.raw_identify_data = data
             data = json.loads(data)
-            self.fill_enumerations(data.get('enumerations', {}))
-            commands = data.get('commands')
-            responses = data.get('responses')
-            output = data.get('output', {})
-            all_messages = dict(commands)
-            all_messages.update(responses)
-            all_messages.update(output)
-            self._init_messages(all_messages, commands.values(),
-                                output.values())
-            self.config.update(data.get('config', {}))
+            self._add_messages(data)
             self.kconfig = data.get('kconfig')
             self.version = data.get('version', '')
             self.build_versions = data.get('build_versions', '')
@@ -435,6 +437,18 @@ class MessageParser:
         except Exception as e:
             logging.exception("process_identify error")
             self._error("Error during identify: %s", str(e))
+    def add_data_dictionary(self, data):
+        # Add the messages of code loaded into the mcu at run-time
+        try:
+            self._add_messages(data)
+        except Exception as e:
+            logging.exception("add_data_dictionary error")
+            self._error("Error adding data dictionary: %s", str(e))
+        # Existing messages may use enumerations that were just extended
+        for mp in self.messages_by_id.values():
+            for t in getattr(mp, 'param_types', []):
+                if isinstance(t, Enumeration):
+                    t.reverse_enums = {v: k for k, v in t.enums.items()}
     def get_raw_data_dictionary(self):
         return self.raw_identify_data
     def get_version_info(self):
