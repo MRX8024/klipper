@@ -75,17 +75,29 @@ $(OUT)klipper.elf: $(OBJS_klipper.elf)
 
 ################ Compile time requests
 
+# Hashes of the firmware interface used by run-time loaded code
+LOADER_ABI=$(if $(CONFIG_WANT_LOADER),$(OUT)loader_abi.json)
+
 $(OUT)%.o.ctr: $(OUT)%.o
 	$(Q)$(OBJCOPY) -j '.compile_time_request' -O binary $^ $@
 
-$(OUT)compile_time_request.o: $(patsubst %.c, $(OUT)src/%.o.ctr,$(src-y)) ./scripts/buildcommands.py
+$(OUT)compile_time_request.o: $(patsubst %.c, $(OUT)src/%.o.ctr,$(src-y)) $(LOADER_ABI) ./scripts/buildcommands.py
 	@echo "  Building $@"
 	$(Q)cat $(patsubst %.c, $(OUT)src/%.o.ctr,$(src-y)) | tr -s '\0' '\n' > $(OUT)compile_time_request.txt
 	$(Q)$(PYTHON) lib/kconfiglib/savedefconfig.py --kconfig src/Kconfig --out $(OUT)defconfig
-	$(Q)$(PYTHON) ./scripts/buildcommands.py -d $(OUT)klipper.dict -k $(OUT)defconfig -t "$(CC);$(AS);$(LD);$(OBJCOPY);$(OBJDUMP);$(STRIP)" $(OUT)compile_time_request.txt $(OUT)compile_time_request.c
+	$(Q)$(PYTHON) ./scripts/buildcommands.py -d $(OUT)klipper.dict -k $(OUT)defconfig $(if $(LOADER_ABI),-a $(LOADER_ABI)) -t "$(CC);$(AS);$(LD);$(OBJCOPY);$(OBJDUMP);$(STRIP)" $(OUT)compile_time_request.txt $(OUT)compile_time_request.c
 	$(Q)$(CC) $(CFLAGS) -c $(OUT)compile_time_request.c -o $@
 
 ################ Run-time loaded modules
+
+$(OUT)loader_abi.json: src/loader.c $(OUT)autoconf.h ./scripts/loaderabi.py
+	@echo "  Building $@"
+	$(Q)$(CC) $(filter-out -MD,$(CFLAGS)) -E -MD -MP -MT $@ -MF $(OUT)loader_abi.dep src/loader.c -o $(OUT)loader_abi.i
+	$(Q)$(CC) $(filter-out -MD,$(CFLAGS)) -fsyntax-only -aux-info $(OUT)loader_abi.aux src/loader.c
+	$(Q)$(PYTHON) ./scripts/loaderabi.py $(OUT)loader_abi.i $(OUT)loader_abi.aux $@
+
+# Not a .d file (create-board-link removes those)
+-include $(OUT)loader_abi.dep
 
 # The host (klippy/mcu_loader.py) provides MODULE_SRCS along with the
 # sources.txt, firmware.dict, and loader.json files in $(MODULE_OUT)

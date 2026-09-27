@@ -250,6 +250,7 @@ Handlers.append(Handle_arm_irq())
 class HandleLoaderExports:
     def __init__(self):
         self.exports = []
+        self.abi = None
         self.ctr_dispatch = { 'DECL_LOADER_EXPORT': self.decl_loader_export }
     def decl_loader_export(self, req):
         name = req.split()[1]
@@ -258,7 +259,21 @@ class HandleLoaderExports:
     def update_data_dictionary(self, data):
         if self.exports:
             data['loader_exports'] = self.exports
+        if self.abi is not None:
+            # Store the hashes in the order of 'loader_exports'
+            symbols = self.abi['symbols']
+            for n in self.exports:
+                if n not in symbols:
+                    error("Export '%s' must be declared in src/loader.c" % (n,))
+            data['loader_abi'] = {
+                'version': self.abi['version'],
+                'core': symbols['_loader_core'],
+                'hashes': [symbols[n] for n in self.exports]}
     def generate_code(self, options):
+        if options.loader_abi:
+            f = open(options.loader_abi, 'r')
+            self.abi = json.load(f)
+            f.close()
         if not self.exports:
             return ""
         externs = ["extern const void *const _loader_export_%s;\n" % (n,)
@@ -665,6 +680,8 @@ def main():
     opts.add_option("-k", dest="kconfig",
                     help="file containing the minimal (savedefconfig) build "
                     "configuration")
+    opts.add_option("-a", dest="loader_abi",
+                    help="file containing the loader interface hashes")
     opts.add_option("-t", "--tools", dest="tools", default="",
                     help="list of build programs to extract version from")
     opts.add_option("-v", action="store_true", dest="verbose",
