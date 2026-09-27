@@ -6,11 +6,13 @@
 
 #include <stdarg.h> // va_start
 #include <string.h> // memcpy
+#include "autoconf.h" // CONFIG_WANT_LOADER
 #include "board/io.h" // readb
 #include "board/irq.h" // irq_poll
 #include "board/misc.h" // crc16_ccitt
 #include "board/pgm.h" // READP
 #include "command.h" // output_P
+#include "loader.h" // loader_lookup_parser
 #include "sched.h" // sched_is_shutdown
 
 static uint8_t next_sequence = MESSAGE_DEST;
@@ -259,8 +261,15 @@ DECL_SHUTDOWN(sendf_shutdown);
 static const struct command_parser *
 command_lookup_parser(uint_fast16_t cmdid)
 {
-    if (!cmdid || cmdid >= READP(command_index_size))
+    if (!cmdid || cmdid >= READP(command_index_size)) {
+        if (CONFIG_WANT_LOADER) {
+            // Check for a command implemented by a runtime loaded module
+            const struct command_parser *cp = loader_lookup_parser(cmdid);
+            if (cp)
+                return cp;
+        }
         shutdown("Invalid command");
+    }
     return &command_index[cmdid];
 }
 
