@@ -4,7 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import sys, os, zlib, logging, math, struct
-import serialhdl, msgproto, pins, chelper, clocksync
+import serialhdl, msgproto, pins, chelper, clocksync, mcu_loader
 
 class error(Exception):
     pass
@@ -689,6 +689,8 @@ class MCURestartHelper:
         raise error("Attempt MCU '%s' restart failed" % (self._name,))
     def check_restart_on_crc_mismatch(self):
         self._check_restart("CRC mismatch")
+    def check_restart_on_module_change(self):
+        self._check_restart("loadable module change")
     def check_restart_on_send_config(self):
         if self._restart_method == 'rpi_usb':
             # Only configure mcu after usb power reset
@@ -1157,8 +1159,10 @@ class MCU:
         # Low-level connection and helpers
         self._conn_helper = MCUConnectHelper(config, self, clocksync)
         self._serial = self._conn_helper.get_serial()
-        self._config_helper = MCUConfigHelper(self, self._conn_helper)
         self._stats_helper = MCUStatsHelper(self, self._conn_helper)
+        self._module_helper = mcu_loader.MCUModuleHelper(self,
+                                                         self._conn_helper)
+        self._config_helper = MCUConfigHelper(self, self._conn_helper)
         printer.load_object(config, "error_mcu")
         # Alter time reporting when debugging
         if self.is_fileoutput():
@@ -1186,6 +1190,8 @@ class MCU:
         return self._config_helper.get_query_slot(oid)
     def seconds_to_clock(self, time):
         return self._config_helper.seconds_to_clock(time)
+    def register_loadable_module(self, name, sources):
+        self._module_helper.register_module(name, sources)
     # Command Handler helpers
     def min_schedule_time(self):
         return MIN_SCHEDULE_TIME
