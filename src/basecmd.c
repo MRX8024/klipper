@@ -38,6 +38,13 @@ alloc_chunk(size_t size)
     return data;
 }
 
+// Return the address that the next alloc_chunk() call will return
+void *
+alloc_next(void)
+{
+    return alloc_end;
+}
+
 // Allocate an array of chunks
 static void *
 alloc_chunks(size_t size, size_t count, uint16_t *avail)
