@@ -85,6 +85,48 @@ $(OUT)compile_time_request.o: $(patsubst %.c, $(OUT)src/%.o.ctr,$(src-y)) ./scri
 	$(Q)$(PYTHON) ./scripts/buildcommands.py -d $(OUT)klipper.dict -k $(OUT)defconfig -t "$(CC);$(AS);$(LD);$(OBJCOPY);$(OBJDUMP);$(STRIP)" $(OUT)compile_time_request.txt $(OUT)compile_time_request.c
 	$(Q)$(CC) $(CFLAGS) -c $(OUT)compile_time_request.c -o $@
 
+################ Run-time loaded modules
+
+# The host (klippy/mcu_loader.py) provides MODULE_SRCS along with the
+# sources.txt, firmware.dict, and loader.json files in $(MODULE_OUT)
+MODULE_OUT=$(OUT)module/
+MODULE_OBJS=$(patsubst %.c,$(MODULE_OUT)obj%.o,$(abspath $(MODULE_SRCS)))
+MODULE_INPUTS=$(MODULE_OUT)sources.txt $(MODULE_OUT)firmware.dict \
+    $(MODULE_OUT)loader.json
+
+MODULE_LDFLAGS += -Wl,--build-id=none
+MODULE_LDFLAGS += $(shell $(LD) --no-warn-rwx-segments -v >/dev/null 2>&1 \
+    && echo -Wl,--no-warn-rwx-segments)
+CFLAGS_module = $(CFLAGS) $(MODULE_CFLAGS)
+CFLAGS_module.elf = $(CFLAGS_module) $(MODULE_LDFLAGS) -nostdlib \
+    -Wl,--gc-sections -Wl,-T,$(MODULE_OUT)module.ld
+
+$(MODULE_OUT)obj%.o: %.c $(OUT)autoconf.h
+	@echo "  Compiling $@"
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CC) $(CFLAGS_module) -c $< -o $@
+
+$(MODULE_OUT)module_ctr.c: $(patsubst %,%.ctr,$(MODULE_OBJS)) $(MODULE_INPUTS) ./scripts/buildmodule.py ./scripts/buildcommands.py
+	@echo "  Building $@"
+	$(Q)cat $(patsubst %,%.ctr,$(MODULE_OBJS)) /dev/null | tr -s '\0' '\n' > $(MODULE_OUT)compile_time_request.txt
+	$(Q)$(PYTHON) ./scripts/buildmodule.py -d $(MODULE_OUT)firmware.dict -i $(MODULE_OUT)loader.json -o $(MODULE_OUT)module.json -l $(MODULE_OUT)module.ld $(MODULE_OUT)compile_time_request.txt $@
+
+$(MODULE_OUT)module_ctr.o: $(MODULE_OUT)module_ctr.c
+	$(Q)$(CC) $(CFLAGS_module) -c $< -o $@
+
+$(MODULE_OUT)module.elf: $(MODULE_OBJS) $(MODULE_OUT)module_ctr.o
+	@echo "  Linking $@"
+	$(Q)$(CC) $(MODULE_OBJS) $(MODULE_OUT)module_ctr.o $(CFLAGS_module.elf) $(MODULE_LIBS) -o $@
+	$(Q)$(PYTHON) ./scripts/buildmodule.py -i $(MODULE_OUT)loader.json -c $@
+
+$(MODULE_OUT)module.bin: $(MODULE_OUT)module.elf
+	@echo "  Creating module image $@"
+	$(Q)$(OBJCOPY) -O binary -j .text $< $@
+
+module: $(MODULE_OUT)module.bin
+
+-include $(patsubst %.o,%.d,$(MODULE_OBJS))
+
 ################ Auto generation of "board/" include file link
 
 create-board-link:
@@ -120,7 +162,7 @@ menuconfig:
 ################ Generic rules
 
 # Make definitions
-.PHONY : all clean distclean olddefconfig menuconfig create-board-link FORCE
+.PHONY : all clean distclean olddefconfig menuconfig create-board-link module FORCE
 .DELETE_ON_ERROR:
 
 all: $(target-y)
