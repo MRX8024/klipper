@@ -327,7 +327,7 @@ config WANT_STEPPER_OPTIMIZED_BOTH_EDGE
 # Support loading code into the micro-controller at run-time
 config HAVE_LOADER
     bool
-    default y if MACH_RPXXXX
+    default y if MACH_RPXXXX || MACH_STM32H723
 config WANT_LOADER
     bool "Support loading code modules at run-time"
     depends on HAVE_LOADER

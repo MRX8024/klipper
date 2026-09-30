@@ -8,7 +8,7 @@ micro-controller ram. The module's commands, responses, tasks, and
 timers work the same as they would if the code were built into the
 firmware.
 
-The loader is available on the rp2040 and rp2350.
+The loader is available on the rp2040, rp2350, and stm32h723.
 
 ## Firmware
 
