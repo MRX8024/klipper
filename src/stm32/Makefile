@@ -109,3 +109,8 @@ flash: $(OUT)klipper.bin lib/hidflash/hid-flash
 serialflash: $(OUT)klipper.bin
 	@echo "  Flashing $< to $(FLASH_DEVICE) via stm32flash"
 	$(Q)stm32flash -w $< -v -g 0 $(FLASH_DEVICE)
+
+# Loaded modules run from ram and call firmware code using "long calls".
+# The needed libgcc and libc code is linked into the module.
+MODULE_CFLAGS += -mlong-calls
+MODULE_LIBS += -lgcc -lc_nano
