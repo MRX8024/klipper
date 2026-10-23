@@ -267,6 +267,8 @@ class SelectReactor:
     def verify_can_pause(self):
         if self._prevent_pause_count:
             raise ReactorError("Internal error - reactor pause disabled")
+    def can_pause(self):
+        return self._g_dispatch is not None and not self._prevent_pause_count
     # Mutexes
     def mutex(self, is_locked=False):
         return ReactorMutex(self, is_locked)
