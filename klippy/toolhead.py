@@ -267,6 +267,8 @@ class ToolHead:
             self.printer.send_event("toolhead:sync_print_time",
                                     curtime, est_print_time, self.print_time)
     def _process_lookahead(self, lazy=False):
+        # Wait for past step generation first
+        self.motion_queuing.wait_step_gen()
         moves = self.lookahead.flush(lazy=lazy)
         if not moves:
             return
