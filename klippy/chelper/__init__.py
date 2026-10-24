@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import os, logging
+import os, logging, threading
 import cffi
 
 
@@ -302,15 +302,56 @@ def check_build_c_library():
 
 FFI_main = None
 FFI_lib = None
+FFI_sync_lib = None
 pyhelper_logging_callback = None
 
 # Helper invoked from C errorf() code to log errors
 def logging_callback(msg):
     logging.error(FFI_main.string(msg))
 
+# C functions that do not access bg step generation state
+NO_SYNC_FUNCS = {
+    'get_monotonic', 'set_thread_name', 'set_python_logging_callback',
+    'trapq_extract_old', 'steppersyncmgr_gen_steps', 'free',
+}
+NO_SYNC_PREFIXES = ('serialqueue_', 'trdispatch_')
+NO_SYNC_SUFFIXES = ('_alloc', '_free')
+
+# Wrapper that invokes a sync callback before most C calls
+class FFISyncLib:
+    def __init__(self, lib):
+        self.lib = lib
+        self.sync_callback = None
+        self.sync_thread = None
+    def __getattr__(self, name):
+        func = getattr(self.lib, name)
+        if (not callable(func) or name in NO_SYNC_FUNCS
+            or name.startswith(NO_SYNC_PREFIXES)
+            or name.endswith(NO_SYNC_SUFFIXES)):
+            setattr(self, name, func)
+            return func
+        def sync_call(*args):
+            sync_callback = self.sync_callback
+            if sync_callback is None:
+                return func(*args)
+            if threading.get_ident() != self.sync_thread:
+                raise RuntimeError("C call %s from a non reactor thread"
+                                   % (name,))
+            sync_callback()
+            return func(*args)
+        setattr(self, name, sync_call)
+        return sync_call
+
+# Register a callback invoked before C calls that may race with
+# background stepper's step generation
+def set_ffi_sync(sync_callback):
+    get_ffi()
+    FFI_sync_lib.sync_callback = sync_callback
+    FFI_sync_lib.sync_thread = threading.get_ident()
+
 # Return the Foreign Function Interface api to the caller
 def get_ffi():
-    global FFI_main, FFI_lib, pyhelper_logging_callback
+    global FFI_main, FFI_lib, FFI_sync_lib, pyhelper_logging_callback
     if FFI_lib is None:
         # Check if library needs to be built, and build if so
         destlib = check_build_c_library()
@@ -323,7 +364,8 @@ def get_ffi():
         pyhelper_logging_callback = FFI_main.callback("void func(const char *)",
                                                       logging_callback)
         FFI_lib.set_python_logging_callback(pyhelper_logging_callback)
-    return FFI_main, FFI_lib
+        FFI_sync_lib = FFISyncLib(FFI_lib)
+    return FFI_main, FFI_sync_lib
 
 
 ######################################################################
