@@ -47,6 +47,7 @@ class PrinterMotionQueuing:
         self.can_pause = True
         if self.mcu.is_fileoutput():
             self.can_pause = False
+        self.last_clock_sync = None
         # Flush tracking
         flush_handler = self._flush_handler
         if not self.can_pause:
@@ -97,13 +98,18 @@ class PrinterMotionQueuing:
         ffi_lib.steppersync_setup_movequeue(ss, serialqueue, move_count)
         mcu_freq = float(mcu.seconds_to_clock(1.))
         ffi_lib.steppersync_set_time(ss, 0., mcu_freq)
-    def stats(self, eventtime):
-        # Globally calibrate mcu clocks (and step generation clocks)
-        sync_time = self.last_step_gen_time
+    def _calibrate_step_gen_clock(self):
+        if self.last_clock_sync is None:
+            return
         ffi_main, ffi_lib = chelper.get_ffi()
-        for mcu, ss in self.steppersyncs:
-            offset, freq = mcu.calibrate_clock(sync_time, eventtime)
+        for ss, (offset, freq) in self.last_clock_sync:
             ffi_lib.steppersync_set_time(ss, offset, freq)
+        self.last_clock_sync = None
+    def stats(self, eventtime):
+        # Calibrate mcu clocks, step gen clocks are updated on next step gen
+        sync_time = self.last_step_gen_time
+        self.last_clock_sync = [(ss, mcu.calibrate_clock(sync_time, eventtime))
+                                for mcu, ss in self.steppersyncs]
         # Calculate history expiration
         est_print_time = self.mcu.estimated_print_time(eventtime)
         self.clear_history_time = max(0., est_print_time - MOVE_HISTORY_EXPIRE)
@@ -153,6 +159,8 @@ class PrinterMotionQueuing:
         clear_history_time = self.clear_history_time
         if not self.can_pause:
             clear_history_time = max(0., trapq_free_time - MOVE_HISTORY_EXPIRE)
+        # Apply new mcu clock calibration if needed
+        self._calibrate_step_gen_clock()
         # Generate stepper movement and transmit
         ret = self.steppersyncmgr_gen_steps(self.steppersyncmgr, flush_time,
                                             step_gen_time, clear_history_time)
