@@ -3,7 +3,7 @@
 # Copyright (C) 2025  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging
+import logging, threading, queue
 import chelper
 
 BGFLUSH_LOW_TIME = 0.200
@@ -35,6 +35,7 @@ class PrinterMotionQueuing:
         self.syncemitters = []
         self.syncemitter_to_name = {}
         self.steppersyncs = []
+        self.serialqueues = []
         self.steppersyncmgr_gen_steps = ffi_lib.steppersyncmgr_gen_steps
         # History expiration
         self.clear_history_time = 0.
@@ -60,12 +61,26 @@ class PrinterMotionQueuing:
         # Background step generation
         self.step_gen_task = self.reactor.completion()
         self.step_gen_task.complete(None)
+        self.step_gen_idle = threading.Event()
+        self.step_gen_idle.set()
+        self.step_gen_queue = None
         self.step_gen_waiters = 0
+        if self.can_pause:
+            self.step_gen_queue = queue.Queue()
+            threading.Thread(target=self._step_gen_thread, daemon=True).start()
         chelper.set_ffi_sync(self.wait_step_gen)
         # "Drip" timing (for homing and probing moves)
         self.drip_start_times = []
         # Register handlers
         printer.register_event_handler("klippy:shutdown", self._handle_shutdown)
+        printer.register_event_handler("klippy:disconnect",
+                                       self._handle_disconnect)
+    def _handle_disconnect(self):
+        # Bg thread may still use a serialqueue, wait step gen finish
+        self.step_gen_idle.wait()
+        if self.step_gen_queue is not None:
+            self.step_gen_queue.put(None)
+        self.serialqueues = []
     # C trapq tracking
     def allocate_trapq(self):
         ffi_main, ffi_lib = chelper.get_ffi()
@@ -98,6 +113,8 @@ class PrinterMotionQueuing:
         self.syncemitters.append(se)
         return se
     def setup_mcu_movequeue(self, mcu, serialqueue, move_count):
+        # Keep serialqueue allocated while the step gen thread uses it
+        self.serialqueues.append(serialqueue)
         # Setup steppersync object for the mcu's main movequeue
         ffi_main, ffi_lib = chelper.get_ffi()
         ss = self._lookup_steppersync(mcu)
@@ -155,6 +172,10 @@ class PrinterMotionQueuing:
         self.step_gen_waiters += 1
         try:
             while not self.step_gen_task.test():
+                if not self.reactor.can_pause():
+                    # Pause disabled so block on the thread
+                    self.step_gen_idle.wait()
+                    return
                 self.step_gen_task.wait()
         finally:
             self.step_gen_waiters -= 1
@@ -170,6 +191,24 @@ class PrinterMotionQueuing:
         for trapq in self.trapqs:
             self.trapq_finalize_moves(trapq, trapq_free_time,
                                       clear_history_time)
+    def _step_gen_thread(self):
+        ffi_main, ffi_lib = chelper.get_ffi()
+        ffi_lib.set_thread_name(b"mq_stepgen")
+        while 1:
+            item = self.step_gen_queue.get()
+            if item is None:
+                return
+            args, finish_args = item
+            ret = True
+            try:
+                ret = self.steppersyncmgr_gen_steps(*args)
+            except:
+                logging.exception("Exception in step generation thread")
+            finally:
+                self.step_gen_idle.set()
+                complete_cb = lambda e, ret=ret, args=finish_args: (
+                    self._finish_step_gen(ret, *args))
+                self.reactor.register_async_callback(complete_cb)
     # Flush tracking
     def _handle_shutdown(self):
         self.can_pause = False
@@ -208,8 +247,12 @@ class PrinterMotionQueuing:
         run_args = (self.steppersyncmgr, flush_time, step_gen_time,
                     clear_history_time)
         finish_args = (task, err_details, trapq_free_time, clear_history_time)
-        ret = self.steppersyncmgr_gen_steps(*run_args)
-        self._finish_step_gen(ret, *finish_args)
+        if self.step_gen_queue is None or not self.reactor.can_pause():
+            ret = self.steppersyncmgr_gen_steps(*run_args)
+            self._finish_step_gen(ret, *finish_args)
+            return
+        self.step_gen_idle.clear()
+        self.step_gen_queue.put((run_args, finish_args))
     def _await_flush_time(self, want_flush_time):
         while 1:
             if self.last_flush_time >= want_flush_time or not self.can_pause:
