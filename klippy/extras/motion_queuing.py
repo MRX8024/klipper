@@ -11,6 +11,7 @@ BGFLUSH_HIGH_TIME = 0.400
 BGFLUSH_SG_LOW_TIME = 0.450
 BGFLUSH_SG_HIGH_TIME = 0.700
 BGFLUSH_EXTRA_TIME = 0.250
+BGFLUSH_RETRY_TIME = 0.010
 
 MOVE_HISTORY_EXPIRE = 30.
 MIN_KIN_TIME = 0.100
@@ -56,6 +57,11 @@ class PrinterMotionQueuing:
         self.do_kick_flush_timer = True
         self.last_flush_time = self.last_step_gen_time = 0.
         self.need_flush_time = self.need_step_gen_time = 0.
+        # Background step generation
+        self.step_gen_task = self.reactor.completion()
+        self.step_gen_task.complete(None)
+        self.step_gen_waiters = 0
+        chelper.set_ffi_sync(self.wait_step_gen)
         # "Drip" timing (for homing and probing moves)
         self.drip_start_times = []
         # Register handlers
@@ -142,10 +148,38 @@ class PrinterMotionQueuing:
             post_active = ffi_lib.itersolve_get_gen_steps_post_active(sk)
             kin_flush_delay = max(kin_flush_delay, pre_active, post_active)
         self.kin_flush_delay = kin_flush_delay
+    # Background step generation tracking
+    def wait_step_gen(self):
+        if self.step_gen_task.test():
+            return
+        self.step_gen_waiters += 1
+        try:
+            while not self.step_gen_task.test():
+                self.step_gen_task.wait()
+        finally:
+            self.step_gen_waiters -= 1
+    def _finish_step_gen(self, ret, task, err_details, trapq_free_time,
+                         clear_history_time):
+        # Complete first so the synced C calls below do not wait on this task
+        task.complete(ret)
+        if ret:
+            msg = "Internal error in stepcompress"
+            err_details["queue_name"] = self.syncemitter_to_name.get(ret)
+            self.printer.invoke_shutdown(msg, err_details)
+            return
+        for trapq in self.trapqs:
+            self.trapq_finalize_moves(trapq, trapq_free_time,
+                                      clear_history_time)
     # Flush tracking
     def _handle_shutdown(self):
         self.can_pause = False
     def _advance_flush_time(self, want_flush_time, want_step_gen_time=0.):
+        # Let woken waiters run their C calls before the next step generation
+        while 1:
+            self.wait_step_gen()
+            if not self.step_gen_waiters or not self.reactor.can_pause():
+                break
+            self.reactor.pause(self.reactor.NOW)
         flush_time = max(want_flush_time, self.last_flush_time,
                          want_step_gen_time - STEPCOMPRESS_FLUSH_TIME)
         step_gen_time = max(want_step_gen_time, self.last_step_gen_time,
@@ -161,26 +195,21 @@ class PrinterMotionQueuing:
             clear_history_time = max(0., trapq_free_time - MOVE_HISTORY_EXPIRE)
         # Apply new mcu clock calibration if needed
         self._calibrate_step_gen_clock()
-        # Generate stepper movement and transmit
-        ret = self.steppersyncmgr_gen_steps(self.steppersyncmgr, flush_time,
-                                            step_gen_time, clear_history_time)
-        if ret:
-            msg = "Internal error in stepcompress"
-            queue_name = self.syncemitter_to_name.get(ret)
-            err_details = {
-                "queue_name": queue_name,
-                "flush_time": flush_time, "step_gen_time": step_gen_time,
-                "last_flush_time": self.last_flush_time,
-                "last_step_gen_time": self.last_step_gen_time,
-                "clear_history_time": clear_history_time }
-            self.printer.invoke_shutdown(msg, err_details)
-            raise self.mcu.error(msg)
+        # Update times now so new moves are queued after this flush
+        err_details = {
+            "flush_time": flush_time, "step_gen_time": step_gen_time,
+            "last_flush_time": self.last_flush_time,
+            "last_step_gen_time": self.last_step_gen_time,
+            "clear_history_time": clear_history_time }
         self.last_flush_time = flush_time
         self.last_step_gen_time = step_gen_time
-        # Move processed trapq entries to history list, and expire old history
-        for trapq in self.trapqs:
-            self.trapq_finalize_moves(trapq, trapq_free_time,
-                                      clear_history_time)
+        # Generate stepper movement and transmit
+        self.step_gen_task = task = self.reactor.completion()
+        run_args = (self.steppersyncmgr, flush_time, step_gen_time,
+                    clear_history_time)
+        finish_args = (task, err_details, trapq_free_time, clear_history_time)
+        ret = self.steppersyncmgr_gen_steps(*run_args)
+        self._finish_step_gen(ret, *finish_args)
     def _await_flush_time(self, want_flush_time):
         while 1:
             if self.last_flush_time >= want_flush_time or not self.can_pause:
@@ -195,10 +224,17 @@ class PrinterMotionQueuing:
         flush_time = self.need_step_gen_time
         self._await_flush_time(flush_time)
         self._advance_flush_time(flush_time)
+        self.wait_step_gen()
+        # Step generation may return result as error
+        if self.step_gen_task.wait():
+            raise self.mcu.error("Internal error in stepcompress")
     def calc_step_gen_restart(self, est_print_time):
         kin_time = max(est_print_time + MIN_KIN_TIME, self.last_step_gen_time)
         return kin_time + self.kin_flush_delay
     def _flush_handler(self, eventtime):
+        if not self.step_gen_task.test() or self.step_gen_waiters:
+            # Previous step generation is still running or has waiters
+            return eventtime + BGFLUSH_RETRY_TIME
         try:
             est_print_time = self.mcu.estimated_print_time(eventtime)
             aggr_sg_time = self.need_step_gen_time - 2.*self.kin_flush_delay
