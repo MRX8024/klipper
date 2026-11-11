@@ -61,7 +61,11 @@ class DumpStepper:
         mcu_pos = first.start_position
         start_position = self.mcu_stepper.mcu_to_commanded_position(mcu_pos)
         step_dist = self.mcu_stepper.get_step_dist()
-        tdata = [(s.interval, s.step_count, s.add) for s in data]
+        prev_clock = first_clock - (first.interval & 0xffffffff)
+        tdata = []
+        for s in data:
+            tdata.append((s.first_clock - prev_clock, s.step_count, s.add))
+            prev_clock = s.last_clock
         return {"data": tdata, "start_position": start_position,
                 "start_mcu_position": mcu_pos, "step_distance": step_dist,
                 "first_clock": first_clock, "first_step_time": first_time,
