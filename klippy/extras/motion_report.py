@@ -40,7 +40,8 @@ class DumpStepper:
                       self.mcu_stepper.get_mcu().get_name(), len(data)))
         for i, s in enumerate(data):
             out.append("queue_step %d: t=%d p=%d i=%d c=%d a=%d"
-                       % (i, s.first_clock, s.start_position, s.interval,
+                       % (i, s.first_clock, s.start_position,
+                          s.interval & 0xffffffff,
                           s.step_count, s.add))
         logging.info('\n'.join(out))
     def _process_batch(self, eventtime):
